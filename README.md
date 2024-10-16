@@ -112,42 +112,64 @@ query = (df.writeStream.format("delta")
 After the stream processing, it’s advisable to clean up any temporary files and directories if necessary. Ensure that you manage your storage effectively by monitoring the size of your checkpoint and schema locations.
 
 
-README for Data Processing Pipeline: From Bronze to Silver Table
-Overview
-This notebook outlines the steps to process streaming data from a Delta table (bronze_table) into a refined Delta table (silver_table) using PySpark. The transformation includes handling missing values, duplicates, incorrect data types, and computing additional metrics.
+# README for Data Processing Pipeline: From Bronze to Silver Table
 
-Table of Contents
-Schema Cleanup and Setup
-Data Ingestion
-Data Transformation
-Statistical Analysis
-Data Validation
-Final Write to Silver Table
-1. Schema Cleanup and Setup
-We begin by truncating the silver_table and cleaning up any previous checkpoint data to ensure a fresh processing environment.
+## Overview
 
+This notebook outlines the steps to process streaming data from a Delta table (`bronze_table`) into a refined Delta table (`silver_table`) using PySpark. The transformation includes handling missing values, duplicates, incorrect data types, and computing additional metrics.
+
+## Table of Contents
+
+1. **Schema Cleanup and Setup**
+2. **Data Ingestion**
+3. **Data Transformation**
+4. **Statistical Analysis**
+5. **Data Validation**
+6. **Final Write to Silver Table**
+
+## 1. Schema Cleanup and Setup
+
+We begin by truncating the `silver_table` and cleaning up any previous checkpoint data to ensure a fresh processing environment.
+
+```sql
 %sql
 truncate TABLE rashid.silver_table;
+```
+
+```python
 %fs rm -r FileStore/rashid/autoloader/sil_cp
 %fs mkdirs FileStore/rashid/autoloader/sil_cp
-2. Data Ingestion
-We read streaming data from the bronze_table into a DataFrame. The schema is inferred automatically.
+```
 
+## 2. Data Ingestion
+
+We read streaming data from the `bronze_table` into a DataFrame. The schema is inferred automatically.
+
+```python
 silver_df = spark.readStream.format("delta").option("inferSchema", "true").table("rashid.bronze_table")
-3. Data Transformation
+```
+
+## 3. Data Transformation
+
 In this section, we apply various transformations:
 
-Handle Missing Values: Set fare_amount to None if it exceeds a certain threshold.
-Introduce Duplicates: For testing, we add 10 duplicate rows.
-Incorrect Data Types: Change total_amount to string type for demonstration.
+- **Handle Missing Values**: Set `fare_amount` to `None` if it exceeds a certain threshold.
+- **Introduce Duplicates**: For testing, we add 10 duplicate rows.
+- **Incorrect Data Types**: Change `total_amount` to string type for demonstration.
+
+```python
 from pyspark.sql.functions import when, col, lit 
 
 df_with_missing = silver_df.withColumn("fare_amount", when(col("fare_amount") > 45, lit(None)).otherwise(col("fare_amount")))
 df_with_duplicates = df_with_missing.union(df_with_missing.limit(10))  # Adding 10 duplicate rows
 df_with_incorrect_types = df_with_duplicates.withColumn("total_amount", col("total_amount").cast("string"))
-4. Statistical Analysis
-We calculate the count of missing values across all columns and compute basic statistics for numeric columns (trip_distance, fare_amount, and total_amount).
+```
 
+## 4. Statistical Analysis
+
+We calculate the count of missing values across all columns and compute basic statistics for numeric columns (`trip_distance`, `fare_amount`, and `total_amount`).
+
+```python
 from pyspark.sql.functions import count, isnan, mean, stddev
 
 numeric_columns = [c for c, dtype in silver_df.dtypes if dtype in ('double', 'float', 'int')]
@@ -165,9 +187,13 @@ missing_values_count = silver_df.select([
 stats = silver_df.select([mean(col(c)).alias(f"mean_{c}") for c in numeric_columns] +
                          [stddev(col(c)).alias(f"stddev_{c}") for c in numeric_columns])
 # display(stats)
-5. Data Validation
+```
+
+## 5. Data Validation
+
 We validate the data by filtering out unrealistic values and checking for type mismatches based on an expected schema.
 
+```python
 # Filter out unrealistic values
 silver_df = silver_df.filter((col("trip_distance") < 100) & (col("fare_amount") < 500))
 
@@ -199,9 +225,13 @@ for col_name, expected_type in expected_schema.items():
     actual_type = [f.dataType for f in silver_df.schema.fields if f.name == col_name][0]
     if type(actual_type) != type(expected_type):
         print(f"Column '{col_name}' has incorrect data type. Expected: {expected_type.simpleString()}, Actual: {actual_type.simpleString()}")
-6. Final Write to Silver Table
-After corrections and validations, we write the refined DataFrame to the silver_table. This includes additional transformations to compute time duration and tax percentage.
+```
 
+## 6. Final Write to Silver Table
+
+After corrections and validations, we write the refined DataFrame to the `silver_table`. This includes additional transformations to compute time duration and tax percentage.
+
+```python
 from pyspark.sql import functions as F
 
 silver_df = df_corrected.withColumn(
@@ -229,12 +259,8 @@ query = (silver_df.writeStream
          .option("checkpointLocation", sil_cp)  # Checkpointing
          .trigger(availableNow=True) 
          .table("rashid.silver_table"))  # Write to the silver table
-Conclusion
+```
+
+## Conclusion
+
 This notebook provides a comprehensive framework for processing streaming data from a bronze to a silver Delta table. Each transformation step is crucial for ensuring data quality and preparing the dataset for further analysis. Adjust the code and schema as needed based on specific data requirements.
-## Notes
-
-- Adjust the schema as necessary to fit your data requirements.
-- Ensure the DBFS paths are correct and accessible.
-- Monitor the stream for errors and performance metrics to optimize data ingestion.
-
-This README serves as a guide to understand the setup and configuration for ingesting data using PySpark's Auto Loader into Delta tables.
